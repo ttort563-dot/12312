@@ -7,7 +7,6 @@ use crate::{
     },
     terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen},
 };
-
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 

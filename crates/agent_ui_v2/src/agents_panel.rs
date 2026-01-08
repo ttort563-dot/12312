@@ -218,7 +218,6 @@ impl AgentsPanel {
         let session_id = acp::SessionId::new(session_id_str.clone());
         self.open_session(
             session_id,
-            None, // Title will be loaded when thread is resumed
             serialized_pane.expanded,
             serialized_pane.width,
             window,
@@ -260,7 +259,7 @@ impl AgentsPanel {
     ) {
         match event {
             ThreadHistoryEvent::OpenSession(session_id) => {
-                self.open_session(session_id.clone(), None, true, None, window, cx);
+                self.open_session(session_id.clone(), true, None, window, cx);
             }
         }
     }
@@ -268,7 +267,6 @@ impl AgentsPanel {
     fn open_session(
         &mut self,
         session_id: acp::SessionId,
-        title: Option<SharedString>,
         expanded: bool,
         width: Option<Pixels>,
         window: &mut Window,
@@ -293,7 +291,6 @@ impl AgentsPanel {
             let mut pane = AgentThreadPane::new(workspace.clone(), cx);
             pane.open_session(
                 session_id,
-                title,
                 fs,
                 workspace.clone(),
                 project,

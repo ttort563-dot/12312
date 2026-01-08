@@ -80,7 +80,6 @@ impl AgentThreadPane {
     pub fn open_session(
         &mut self,
         session_id: acp::SessionId,
-        title: Option<SharedString>,
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
@@ -90,7 +89,7 @@ impl AgentThreadPane {
     ) {
         let resume_thread = DbThreadMetadata {
             id: session_id.clone(),
-            title: title.unwrap_or_else(|| "New Thread".into()),
+            title: "New Thread".into(), // BENTODO: Load from agent sessions?
             updated_at: Utc::now(),
         };
 
@@ -104,7 +103,7 @@ impl AgentThreadPane {
                 workspace,
                 project,
                 prompt_store,
-                None,
+                None, // BENTODO: SHould this be set?
                 true,
                 window,
                 cx,

@@ -111,7 +111,7 @@ mod tests {
     use super::*;
 
     agent_servers::e2e_tests::common_e2e_tests!(
-        async |fs, _project, cx| {
+        async |fs, cx| {
             let auth = cx.update(|cx| {
                 prompt_store::init(cx);
                 let registry = language_model::LanguageModelRegistry::read_global(cx);

@@ -205,8 +205,6 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
     fn confirm_command(&self, cx: &mut App);
 
     /// Returns thread entries available for @thread completions.
-    /// For agent views, returns agent sessions from the current connection.
-    /// For text thread views / inline assist, returns text threads.
     fn thread_entries(&self, cx: &App) -> Vec<ThreadCompletionEntry> {
         let _ = cx;
         Vec::new()

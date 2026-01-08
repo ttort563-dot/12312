@@ -85,7 +85,7 @@ impl EntryViewState {
                             self.prompt_capabilities.clone(),
                             self.available_commands.clone(),
                             self.agent_name.clone(),
-                            None,
+                            None, // BENTODO: Do we need agent_sessions here?
                             "Edit message － @ to include context",
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,

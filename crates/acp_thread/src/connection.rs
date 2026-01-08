@@ -146,7 +146,6 @@ pub trait AgentSessionList {
     /// Whether this agent supports deleting sessions from the session list UI.
     ///
     /// This is intentionally agent-level (not per-session) so UI can cache it
-    /// without probing during `render()` or fabricating a dummy `SessionId`.
     fn supports_delete(&self) -> bool {
         false
     }
@@ -163,9 +162,6 @@ pub trait AgentSessionList {
     ///
     /// This exists to support the "Delete All History" UI affordance without requiring the UI to
     /// enumerate and delete sessions one-by-one.
-    ///
-    /// Implementations should perform the deletion asynchronously and may choose to update any
-    /// internal caches as part of the operation.
     fn delete_all_sessions(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionDeleteAll>> {
         None
     }
@@ -666,6 +662,7 @@ mod test_support {
             }
         }
     }
+
     /// A mock session list provider for testing.
     ///
     /// Sessions can be configured via `set_sessions` and inspected/modified

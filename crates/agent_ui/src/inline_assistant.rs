@@ -1934,21 +1934,9 @@ impl CodeActionProvider for AssistantCodeActionProvider {
     ) -> Task<Result<ProjectTransaction>> {
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
-        let _prompt_store = PromptStore::global(cx);
+        let prompt_store = PromptStore::global(cx);
         window.spawn(cx, async move |cx| {
             let workspace = workspace.upgrade().context("workspace was released")?;
-            let prompt_store = cx
-                .update(|_window, cx| {
-                    workspace
-                        .read(cx)
-                        .panel::<AgentPanel>(cx)
-                        .context("missing agent panel")?
-                        .read(cx)
-                        .prompt_store()
-                        .clone()
-                        .context("missing prompt store")
-                })?
-                .ok();
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
                 .update(cx, |editor, cx| {
@@ -1982,6 +1970,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                 })
                 .context("invalid range")?;
 
+            let prompt_store = prompt_store.await.ok();
             cx.update_global(|assistant: &mut InlineAssistant, window, cx| {
                 let assist_id = assistant.suggest_assist(
                     &editor,
@@ -2140,7 +2129,7 @@ pub mod test {
                         &editor,
                         workspace.downgrade(),
                         project.downgrade(),
-                        None, // prompt_store
+                        None,
                         Some(prompt),
                         window,
                         cx,

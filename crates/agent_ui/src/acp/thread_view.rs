@@ -434,7 +434,7 @@ impl AcpThreadView {
             && project.read(cx).is_local()
             && agent.clone().downcast::<agent_servers::Codex>().is_some();
 
-        let this = Self {
+        Self {
             agent: agent.clone(),
             agent_server_store,
             workspace: workspace.clone(),
@@ -474,7 +474,6 @@ impl AcpThreadView {
             available_commands,
             editor_expanded: false,
             should_be_following: false,
-
             is_loading_contents: false,
             _subscriptions: subscriptions,
             _cancel_task: None,
@@ -486,9 +485,7 @@ impl AcpThreadView {
             message_queue: Vec::new(),
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
-        };
-
-        this
+        }
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1015,8 +1012,11 @@ impl AcpThreadView {
 
             let db_thread = shared_thread.to_db_thread();
 
-            let database = database_future.await.map_err(|err| anyhow!("{err}"))?;
-            database.save_thread(session_id.clone(), db_thread).await?;
+            database_future
+                .await
+                .map_err(|err| anyhow!("{err}"))?
+                .save_thread(session_id.clone(), db_thread)
+                .await?;
 
             let thread_metadata = agent::DbThreadMetadata {
                 id: session_id,
@@ -3977,12 +3977,6 @@ impl AcpThreadView {
         )
     }
 
-    fn render_recent_history(&self, _cx: &mut Context<Self>) -> AnyElement {
-        // Recent sessions UI is now owned by AgentPanel so the empty-state list, navigation menu,
-        // and History share a single provider-backed snapshot and ordering.
-        v_flex().size_full().into_any()
-    }
-
     fn render_auth_required_state(
         &self,
         connection: &Rc<dyn AgentConnection>,
@@ -6739,10 +6733,7 @@ impl Render for AcpThreadView {
                         cx,
                     ))
                     .into_any_element(),
-                ThreadState::Loading { .. } => v_flex()
-                    .flex_1()
-                    .child(self.render_recent_history(cx))
-                    .into_any(),
+                ThreadState::Loading { .. } => v_flex().flex_1().size_full().into_any(),
                 ThreadState::LoadError(e) => v_flex()
                     .flex_1()
                     .size_full()
@@ -6772,7 +6763,7 @@ impl Render for AcpThreadView {
                         .vertical_scrollbar_for(&self.list_state, window, cx)
                         .into_any()
                     } else {
-                        this.child(self.render_recent_history(cx)).into_any()
+                        this.size_full().into_any()
                     }
                 }),
             })

@@ -64,7 +64,7 @@ pub struct PromptEditor<T> {
     mention_set: Entity<MentionSet>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
-    agent_sessions: Option<AgentSessions>,
+    agent_sessions: Option<AgentSessions>, // BENTODO: WHEN IS THIS SET
     model_selector: Entity<AgentModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,

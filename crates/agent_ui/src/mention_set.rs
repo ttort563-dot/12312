@@ -61,7 +61,7 @@ pub struct MentionImage {
 
 pub struct MentionSet {
     project: WeakEntity<Project>,
-    text_thread_store: Option<Entity<TextThreadStore>>,
+    text_thread_store: Option<Entity<TextThreadStore>>, // BENTODO: This needs to be set or removed
     prompt_store: Option<Entity<PromptStore>>,
     mentions: HashMap<CreaseId, (MentionUri, MentionTask)>,
 }

@@ -6,6 +6,7 @@ use acp_thread::AcpThread;
 use agent::{ContextServerRegistry, DbThreadMetadata};
 use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use parking_lot::Mutex;
 use project::{
     ExternalAgentServerName,
     agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
@@ -80,18 +81,15 @@ use zed_actions::{
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
-/// Shared container for agent sessions with visibility-based access control.
-/// - Write methods are private (only `AgentPanel` in this module can update)
-/// - Read methods are public (consumers like inline assist can read)
 #[derive(Clone)]
 pub struct AgentSessions {
-    inner: Arc<parking_lot::Mutex<Vec<AgentSessionInfo>>>,
+    inner: Arc<Mutex<Vec<AgentSessionInfo>>>,
 }
 
 impl AgentSessions {
     fn new() -> Self {
         Self {
-            inner: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            inner: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -349,7 +347,7 @@ impl ActiveView {
                 workspace,
                 project,
                 prompt_store,
-                None,
+                None, //BENTODO: Need sessions here?
                 false,
                 window,
                 cx,
@@ -457,12 +455,9 @@ pub struct AgentPanel {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     acp_history: Entity<AcpThreadHistory>,
-
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     text_history: Entity<TextThreadHistory>,
-
-    // Connection-backed agent session snapshot (unified ordering for Recent, navigation menu, and History).
     agent_session_list: Option<Rc<dyn AgentSessionList>>,
     agent_sessions: AgentSessions,
     agent_delete_supported: bool,
@@ -776,12 +771,10 @@ impl AgentPanel {
             pending_serialization: None,
             onboarding,
             acp_history,
-
             text_history,
             selected_agent: AgentType::default(),
             loading: false,
             show_trust_workspace_message: false,
-
             agent_session_list: None,
             agent_sessions: AgentSessions::new(),
             agent_delete_supported: false,
@@ -3412,7 +3405,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             let Some(workspace) = self.workspace.upgrade() else {
                 return;
             };
-            let Some(_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+            if workspace.read(cx).panel::<AgentPanel>(cx).is_none() {
                 return;
             };
             let project = workspace.read(cx).project().downgrade();
@@ -3562,6 +3555,7 @@ impl AgentPanel {
         self.active_thread_view()
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3590,8 +3584,6 @@ mod tests {
             prompt_store::init(cx);
             language_model::init_settings(cx);
             assistant_slash_command::init(cx);
-
-            // Register slash commands needed for text thread tests
             let slash_command_registry = assistant_slash_command::SlashCommandRegistry::global(cx);
             slash_command_registry
                 .register_command(assistant_slash_commands::DefaultSlashCommand, false);
@@ -3631,8 +3623,6 @@ mod tests {
             cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx))
         });
 
-        // If a mock session list is provided, configure StubAgentConnection with it
-        // and create a thread view that exposes the session_list capability.
         if let Some(session_list) = mock_session_list {
             panel.update_in(cx, |panel, window, cx| {
                 let connection = StubAgentConnection::new().with_session_list(session_list.clone());
@@ -3655,9 +3645,6 @@ mod tests {
 
                 panel.active_view = ActiveView::ExternalAgentThread { thread_view };
 
-                // Populate the session list snapshot from the mock provider.
-                // Clone the MockAgentSessionList and wrap in Rc (the underlying Arc<Mutex<>>
-                // data is shared, so modifications are visible to both).
                 let provider = Rc::new((*session_list).clone()) as Rc<dyn AgentSessionList>;
                 panel.set_agent_session_list_provider(provider, cx);
                 panel
@@ -3691,7 +3678,6 @@ mod tests {
         let (panel, _workspace, cx) = setup_agent_panel(Some(mock_session_list), cx).await;
         cx.run_until_parked();
 
-        // Initial state: should be in ExternalAgentThread (agent session mode)
         panel.read_with(cx, |panel, _cx| {
             assert!(
                 matches!(panel.active_view, ActiveView::ExternalAgentThread { .. }),
@@ -3701,12 +3687,10 @@ mod tests {
             assert_eq!(panel.navigation_mode(), NavigationMode::AgentSessions);
         });
 
-        // Action: Dispatch OpenHistory while in agent-session mode
         panel.update_in(cx, |panel, window, cx| {
             panel.open_history(window, cx);
         });
 
-        // Assert: Should route to HistoryAgent
         panel.read_with(cx, |panel, _cx| {
             assert!(
                 matches!(panel.active_view, ActiveView::HistoryAgent),
@@ -3714,7 +3698,6 @@ mod tests {
             );
         });
 
-        // Go back to agent thread view
         panel.update_in(cx, |panel, window, cx| {
             panel.go_back(&GoBack, window, cx);
         });
@@ -3795,12 +3778,10 @@ mod tests {
         let (panel, _workspace, cx) = setup_agent_panel(Some(mock_session_list.clone()), cx).await;
         cx.run_until_parked();
 
-        // Initial state: 3 sessions in panel snapshot
         panel.read_with(cx, |panel, _cx| {
             assert_eq!(panel.agent_sessions.get().len(), 3);
         });
 
-        // Open history view
         panel.update_in(cx, |panel, window, cx| {
             panel.open_history(window, cx);
         });
@@ -3810,13 +3791,11 @@ mod tests {
             assert!(matches!(panel.active_view, ActiveView::HistoryAgent));
         });
 
-        // Simulate delete by removing a session from the mock and triggering refresh
         mock_session_list
             .sessions
             .lock()
             .retain(|s| s.session_id.0.as_ref() != "session-0");
 
-        // Trigger refresh on the history view
         panel.update_in(cx, |panel, _window, cx| {
             panel
                 .acp_history
@@ -3826,7 +3805,6 @@ mod tests {
         });
         cx.run_until_parked();
 
-        // Verify: mock session list should have 2 sessions now
         assert_eq!(mock_session_list.sessions.lock().len(), 2);
     }
 
@@ -3837,7 +3815,6 @@ mod tests {
         let (panel, _workspace, cx) = setup_agent_panel(None, cx).await;
         cx.run_until_parked();
 
-        // Create a text thread to put us in text thread mode
         panel.update_in(cx, |panel, window, cx| {
             panel.new_text_thread(window, cx);
         });
@@ -3847,7 +3824,6 @@ mod tests {
             assert_eq!(panel.navigation_mode(), NavigationMode::TextThreads);
         });
 
-        // Open history - should route to HistoryText (not HistoryAgent)
         panel.update_in(cx, |panel, window, cx| {
             panel.open_history(window, cx);
         });
@@ -3858,11 +3834,9 @@ mod tests {
                 "Expected HistoryText after OpenHistory in text thread mode, got {:?}",
                 std::mem::discriminant(&panel.active_view)
             );
-            // Navigation mode should still be TextThreads
             assert_eq!(panel.navigation_mode(), NavigationMode::TextThreads);
         });
 
-        // Go back should return to text thread
         panel.update_in(cx, |panel, window, cx| {
             panel.go_back(&GoBack, window, cx);
         });

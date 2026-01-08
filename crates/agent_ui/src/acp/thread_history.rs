@@ -434,7 +434,7 @@ impl AcpThreadHistory {
             (None, String::new(), None)
         };
 
-        let title = session_title(entry);
+        let title = entry.display_title();
         let can_delete = self.delete_supported;
 
         h_flex()
@@ -499,10 +499,6 @@ impl AcpThreadHistory {
     }
 }
 
-fn session_title(session: &AgentSessionInfo) -> SharedString {
-    session.display_title()
-}
-
 fn build_bucketed_items(sessions: Vec<AgentSessionInfo>) -> Vec<ListItemType> {
     let mut items = Vec::with_capacity(sessions.len() + 1);
     let mut bucket = None;
@@ -537,8 +533,10 @@ async fn build_search_items(
 ) -> Vec<ListItemType> {
     let mut candidates = Vec::with_capacity(sessions.len());
     for (idx, session) in sessions.iter().enumerate() {
-        let title = session_title(session);
-        candidates.push(StringMatchCandidate::new(idx, title.as_ref()));
+        candidates.push(StringMatchCandidate::new(
+            idx,
+            session.display_title().as_ref(),
+        ));
     }
 
     const MAX_MATCHES: usize = 100;
@@ -894,7 +892,7 @@ mod tests {
             updated_at: Some(Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap()),
             meta: None,
         };
-        assert_eq!(session_title(&session_empty).as_ref(), "New Thread");
+        assert_eq!(session_empty.display_title().as_ref(), "New Thread");
 
         let session_none = AgentSessionInfo {
             session_id: acp::SessionId::new("none"),
@@ -903,7 +901,7 @@ mod tests {
             updated_at: Some(Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap()),
             meta: None,
         };
-        assert_eq!(session_title(&session_none).as_ref(), "New Thread");
+        assert_eq!(session_none.display_title().as_ref(), "New Thread");
 
         let session_title_ok = AgentSessionInfo {
             session_id: acp::SessionId::new("ok"),
@@ -912,6 +910,6 @@ mod tests {
             updated_at: Some(Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap()),
             meta: None,
         };
-        assert_eq!(session_title(&session_title_ok).as_ref(), "Hello");
+        assert_eq!(session_title_ok.display_title().as_ref(), "Hello");
     }
 }

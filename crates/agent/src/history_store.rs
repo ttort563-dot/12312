@@ -21,6 +21,7 @@ const SAVE_RECENTLY_OPENED_ENTRIES_DEBOUNCE: Duration = Duration::from_millis(50
 const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
 
 //todo: We should remove this function once we support loading all acp thread
+// BENTODO: CLEAN UP THIS FILE
 pub fn load_agent_thread(
     session_id: acp::SessionId,
     project: Entity<Project>,
