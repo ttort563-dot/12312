@@ -1,18 +1,21 @@
-use agent::{HistoryEntry, HistoryEntryId, HistoryStore};
+use acp_thread::{AgentConnection, AgentSessionList, EmptySessionList};
+use agent::NativeAgentConnection;
+use agent_client_protocol as acp;
+use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::AgentSettings;
 use anyhow::Result;
-use assistant_text_thread::TextThreadStore;
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{
-    Action, AsyncWindowContext, Entity, EventEmitter, Focusable, Pixels, Subscription, Task,
-    WeakEntity, actions, prelude::*,
+    Action, AsyncWindowContext, Entity, EventEmitter, Focusable, Pixels, SharedString,
+    Subscription, Task, WeakEntity, actions, prelude::*,
 };
 use project::Project;
-use prompt_store::{PromptBuilder, PromptStore};
+use prompt_store::PromptStore;
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, update_settings_file};
+use std::rc::Rc;
 use std::sync::Arc;
 use ui::{App, Context, IconName, IntoElement, ParentElement, Render, Styled, Window};
 use util::ResultExt;
@@ -23,7 +26,7 @@ use workspace::{
 };
 
 use crate::agent_thread_pane::{
-    AgentThreadPane, AgentsUtilityPaneEvent, SerializedAgentThreadPane, SerializedHistoryEntryId,
+    AgentThreadPane, AgentsUtilityPaneEvent, SerializedAgentThreadPane,
 };
 use crate::thread_history::{AcpThreadHistory, ThreadHistoryEvent};
 
@@ -58,7 +61,7 @@ pub struct AgentsPanel {
     project: Entity<Project>,
     agent_thread_pane: Option<Entity<AgentThreadPane>>,
     history: Entity<AcpThreadHistory>,
-    history_store: Entity<HistoryStore>,
+    agent_session_list: Option<Rc<dyn AgentSessionList>>,
     prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
@@ -84,23 +87,11 @@ impl AgentsPanel {
                 })
                 .await;
 
-            let (fs, project, prompt_builder) = workspace.update(cx, |workspace, cx| {
+            let (fs, project) = workspace.update(cx, |workspace, _cx| {
                 let fs = workspace.app_state().fs.clone();
                 let project = workspace.project().clone();
-                let prompt_builder = PromptBuilder::load(fs.clone(), false, cx);
-                (fs, project, prompt_builder)
+                (fs, project)
             })?;
-
-            let text_thread_store = workspace
-                .update(cx, |_, cx| {
-                    TextThreadStore::new(
-                        project.clone(),
-                        prompt_builder.clone(),
-                        Default::default(),
-                        cx,
-                    )
-                })?
-                .await?;
 
             let prompt_store = workspace
                 .update(cx, |_, cx| PromptStore::global(cx))?
@@ -109,15 +100,8 @@ impl AgentsPanel {
 
             workspace.update_in(cx, |_, window, cx| {
                 cx.new(|cx| {
-                    let mut panel = Self::new(
-                        workspace.clone(),
-                        fs,
-                        project,
-                        prompt_store,
-                        text_thread_store,
-                        window,
-                        cx,
-                    );
+                    let mut panel =
+                        Self::new(workspace.clone(), fs, project, prompt_store, window, cx);
                     if let Some(serialized_panel) = serialized_panel {
                         panel.width = serialized_panel.width;
                         if let Some(serialized_pane) = serialized_panel.pane {
@@ -135,14 +119,14 @@ impl AgentsPanel {
         fs: Arc<dyn Fs>,
         project: Entity<Project>,
         prompt_store: Option<Entity<PromptStore>>,
-        text_thread_store: Entity<TextThreadStore>,
         window: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
-        let history = cx.new(|cx| AcpThreadHistory::new(history_store.clone(), window, cx));
+        // Initialize with empty session list - will be populated when we have an agent connection
+        let session_list: Rc<dyn AgentSessionList> = Rc::new(EmptySessionList);
+        let history = cx.new(|cx| AcpThreadHistory::new(session_list.clone(), window, cx));
 
         let this = cx.weak_entity();
         let subscriptions = vec![
@@ -155,19 +139,70 @@ impl AgentsPanel {
             }),
         ];
 
-        Self {
+        let mut panel = Self {
             focus_handle,
             workspace,
             project,
             agent_thread_pane: None,
             history,
-            history_store,
+            agent_session_list: None,
             prompt_store,
             fs,
             width: None,
             pending_serialization: Task::ready(None),
             _subscriptions: subscriptions,
-        }
+        };
+
+        // Initialize the session list from native agent
+        panel.initialize_session_list(cx);
+
+        panel
+    }
+
+    fn initialize_session_list(&mut self, cx: &mut Context<Self>) {
+        let fs = self.fs.clone();
+        let project = self.project.clone();
+
+        // Create a native agent connection to get the session list
+        let delegate = AgentServerDelegate::new(
+            project.read(cx).agent_server_store().clone(),
+            project.clone(),
+            None,
+            None,
+        );
+
+        let server = Rc::new(agent::NativeAgentServer::new(fs));
+        let connection_task = server.connect(None, delegate, cx);
+
+        cx.spawn(async move |this, cx| {
+            let (connection, _): (Rc<dyn AgentConnection>, _) = match connection_task.await {
+                Ok(result) => result,
+                Err(err) => {
+                    log::error!("Failed to create agent connection for session list: {err:?}");
+                    return;
+                }
+            };
+
+            let native_connection: Rc<NativeAgentConnection> =
+                match connection.downcast::<NativeAgentConnection>() {
+                    Some(conn) => conn,
+                    None => {
+                        log::error!("Failed to downcast to NativeAgentConnection");
+                        return;
+                    }
+                };
+
+            this.update(cx, |this, cx| {
+                if let Some(session_list) = native_connection.session_list(cx) {
+                    this.agent_session_list = Some(session_list.clone());
+                    this.history.update(cx, |history, cx| {
+                        history.set_session_list(session_list, cx);
+                    });
+                }
+            })
+            .log_err();
+        })
+        .detach();
     }
 
     fn restore_utility_pane(
@@ -176,34 +211,19 @@ impl AgentsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread_id) = &serialized_pane.thread_id else {
+        let Some(session_id_str) = &serialized_pane.session_id else {
             return;
         };
 
-        let entry = self
-            .history_store
-            .read(cx)
-            .entries()
-            .find(|e| match (&e.id(), thread_id) {
-                (
-                    HistoryEntryId::AcpThread(session_id),
-                    SerializedHistoryEntryId::AcpThread(id),
-                ) => session_id.to_string() == *id,
-                (HistoryEntryId::TextThread(path), SerializedHistoryEntryId::TextThread(id)) => {
-                    path.to_string_lossy() == *id
-                }
-                _ => false,
-            });
-
-        if let Some(entry) = entry {
-            self.open_thread(
-                entry,
-                serialized_pane.expanded,
-                serialized_pane.width,
-                window,
-                cx,
-            );
-        }
+        let session_id = acp::SessionId::new(session_id_str.clone());
+        self.open_session(
+            session_id,
+            None, // Title will be loaded when thread is resumed
+            serialized_pane.expanded,
+            serialized_pane.width,
+            window,
+            cx,
+        );
     }
 
     fn handle_utility_pane_event(
@@ -239,24 +259,24 @@ impl AgentsPanel {
         cx: &mut Context<Self>,
     ) {
         match event {
-            ThreadHistoryEvent::Open(entry) => {
-                self.open_thread(entry.clone(), true, None, window, cx);
+            ThreadHistoryEvent::OpenSession(session_id) => {
+                self.open_session(session_id.clone(), None, true, None, window, cx);
             }
         }
     }
 
-    fn open_thread(
+    fn open_session(
         &mut self,
-        entry: HistoryEntry,
+        session_id: acp::SessionId,
+        title: Option<SharedString>,
         expanded: bool,
         width: Option<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entry_id = entry.id();
-
+        // Check if we already have this session open
         if let Some(existing_pane) = &self.agent_thread_pane {
-            if existing_pane.read(cx).thread_id() == Some(entry_id) {
+            if existing_pane.read(cx).session_id() == Some(&session_id) {
                 existing_pane.update(cx, |pane, cx| {
                     pane.set_expanded(true, cx);
                 });
@@ -271,8 +291,9 @@ impl AgentsPanel {
 
         let agent_thread_pane = cx.new(|cx| {
             let mut pane = AgentThreadPane::new(workspace.clone(), cx);
-            pane.open_thread(
-                entry,
+            pane.open_session(
+                session_id,
+                title,
                 fs,
                 workspace.clone(),
                 project,

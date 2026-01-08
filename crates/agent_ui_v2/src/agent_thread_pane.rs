@@ -1,7 +1,9 @@
-use agent::{HistoryEntry, HistoryEntryId, NativeAgentServer};
+use agent::{DbThreadMetadata, NativeAgentServer};
+use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
 use agent_ui::acp::AcpThreadView;
+use chrono::Utc;
 use fs::Fs;
 use gpui::{
     Entity, EventEmitter, Focusable, Pixels, SharedString, Subscription, WeakEntity, prelude::*,
@@ -22,30 +24,11 @@ use workspace::{
 
 pub const DEFAULT_UTILITY_PANE_WIDTH: Pixels = gpui::px(400.0);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum SerializedHistoryEntryId {
-    AcpThread(String),
-    TextThread(String),
-}
-
-impl From<HistoryEntryId> for SerializedHistoryEntryId {
-    fn from(id: HistoryEntryId) -> Self {
-        match id {
-            HistoryEntryId::AcpThread(session_id) => {
-                SerializedHistoryEntryId::AcpThread(session_id.0.to_string())
-            }
-            HistoryEntryId::TextThread(path) => {
-                SerializedHistoryEntryId::TextThread(path.to_string_lossy().to_string())
-            }
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SerializedAgentThreadPane {
     pub expanded: bool,
     pub width: Option<Pixels>,
-    pub thread_id: Option<SerializedHistoryEntryId>,
+    pub session_id: Option<String>,
 }
 
 pub enum AgentsUtilityPaneEvent {
@@ -58,7 +41,7 @@ impl EventEmitter<ClosePane> for AgentThreadPane {}
 
 struct ActiveThreadView {
     view: Entity<AcpThreadView>,
-    thread_id: HistoryEntryId,
+    session_id: acp::SessionId,
     _notify: Subscription,
 }
 
@@ -82,21 +65,22 @@ impl AgentThreadPane {
         }
     }
 
-    pub fn thread_id(&self) -> Option<HistoryEntryId> {
-        self.thread_view.as_ref().map(|tv| tv.thread_id.clone())
+    pub fn session_id(&self) -> Option<&acp::SessionId> {
+        self.thread_view.as_ref().map(|tv| &tv.session_id)
     }
 
     pub fn serialize(&self) -> SerializedAgentThreadPane {
         SerializedAgentThreadPane {
             expanded: self.expanded,
             width: self.width,
-            thread_id: self.thread_id().map(SerializedHistoryEntryId::from),
+            session_id: self.session_id().map(|id| id.to_string()),
         }
     }
 
-    pub fn open_thread(
+    pub fn open_session(
         &mut self,
-        entry: HistoryEntry,
+        session_id: acp::SessionId,
+        title: Option<SharedString>,
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
@@ -104,11 +88,10 @@ impl AgentThreadPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread_id = entry.id();
-
-        let resume_thread = match &entry {
-            HistoryEntry::AcpThread(thread) => Some(thread.clone()),
-            HistoryEntry::TextThread(_) => None,
+        let resume_thread = DbThreadMetadata {
+            id: session_id.clone(),
+            title: title.unwrap_or_else(|| "New Thread".into()),
+            updated_at: Utc::now(),
         };
 
         let agent: Rc<dyn AgentServer> = Rc::new(NativeAgentServer::new(fs));
@@ -116,7 +99,7 @@ impl AgentThreadPane {
         let thread_view = cx.new(|cx| {
             AcpThreadView::new(
                 agent,
-                resume_thread,
+                Some(resume_thread),
                 None,
                 workspace,
                 project,
@@ -134,7 +117,7 @@ impl AgentThreadPane {
 
         self.thread_view = Some(ActiveThreadView {
             view: thread_view,
-            thread_id,
+            session_id,
             _notify: notify,
         });
 

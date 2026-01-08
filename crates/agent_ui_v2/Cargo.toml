@@ -17,16 +17,18 @@ test-support = ["agent/test-support"]
 
 
 [dependencies]
+acp_thread.workspace = true
 agent.workspace = true
+agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 anyhow.workspace = true
-assistant_text_thread.workspace = true
 chrono.workspace = true
 db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
+log.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
