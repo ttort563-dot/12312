@@ -2,15 +2,29 @@ name: run_bundling
 on:
   workflow_dispatch: 
 
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  CARGO_INCREMENTAL: 0
+  # РЕШЕНИЕ 1: Максимально короткий путь для Cargo, чтобы обойти лимит 260 символов
+  CARGO_HOME: D:\c
+  ZED_WORKSPACE: ${{ github.workspace }}
+
 jobs:
   bundle_windows_x86_64:
     runs-on: windows-2022 
-    env:
-      CARGO_TERM_COLOR: always
-      RUST_BACKTRACE: '1'
-      CARGO_INCREMENTAL: 0
-      ZED_WORKSPACE: ${{ github.workspace }}
+    # РЕШЕНИЕ 2: Принудительно используем PowerShell 7 для всего процесса
+    defaults:
+      run:
+        shell: pwsh
+
     steps:
+    - name: Enable Long Paths
+      # РЕШЕНИЕ 3: Включаем поддержку длинных путей на уровне ОС и Git до загрузки кода
+      run: |
+        reg add "HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\FileSystem" /v LongPathsEnabled /t REG_DWORD /d 1 /f
+        git config --global core.longpaths true
+
     - name: checkout_repo
       uses: actions/checkout@v4
       with:
@@ -19,26 +33,29 @@ jobs:
     - name: setup_rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Patch Script (Surgical Fix)
-      # Мы меняем Community на Enterprise и заменяем только сами вызовы функций 
-      # на команду "Write-Host", чтобы не ломать логику скрипта.
+    - name: Patch Script (Final Fix)
       run: |
-        (Get-Content script/bundle-windows.ps1) | ForEach-Object {
-            $_ -replace 'Community', 'Enterprise' `
-               -replace '^\s*CheckEnvironmentVariables\s*$', 'Write-Host "Skipping Env Check"' `
-               -replace '^\s*Sign-File\s*.*$', 'Write-Host "Skipping Signing"'
-        } | Set-Content script/bundle-windows.ps1
-      shell: pwsh
-
+        $path = "script/bundle-windows.ps1"
+        $script = Get-Content $path
+        # Исправляем путь к Visual Studio
+        $script = $script -replace 'Community', 'Enterprise'
+        # Отключаем проверку ключей и подпись
+        $script = $script -replace '^\s*CheckEnvironmentVariables', '# CheckEnvironmentVariables'
+        $script = $script -replace '^\s*Sign-File', '# Sign-File'
+        # РЕШЕНИЕ 4: Пропускаем генератор лицензий, так как он вызывает ошибки синтаксиса
+        $script = $script -replace '\. script/generate-licenses\.ps1', 'Write-Host "Skipping Licenses"'
+        $script | Set-Content $path
+        # Создаем заглушку, чтобы билд не ругался
+        if (!(Test-Path "assets/licenses.md")) { New-Item -Path "assets/licenses.md" -ItemType File -Force }
+      
     - name: run_bundling
-      # Запускаем сборку. Теперь синтаксис будет правильным.
-      run: powershell script/bundle-windows.ps1 -Architecture x86_64
-      shell: pwsh
+      # Теперь запускаем через pwsh, который понимает тернарные операторы ? :
+      run: pwsh script/bundle-windows.ps1 -Architecture x86_64
 
     - name: upload_artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Zed-Windows-Bypassed
-        # После сборки Zed обычно создает исполняемый файл здесь:
-        path: target/release/zed.exe 
+        name: Zed-Windows-Final
+        # Бандлер кладет результат в эту папку
+        path: target/x86_64-pc-windows-msvc/release/zed.exe
         if-no-files-found: warn
