@@ -8,13 +8,15 @@ env:
   CARGO_INCREMENTAL: 0
   CARGO_HOME: D:\c
   ZED_WORKSPACE: ${{ github.workspace }}
-  # Добавляем "пустышки", чтобы скрипт подписи не ругался на их отсутствие
+  # Полный набор "пустышек" для обхода всех проверок скрипта sign.ps1
   ENDPOINT: "http://127.0.0.1"
   AZURE_TENANT_ID: "00000000-0000-0000-0000-000000000000"
   AZURE_CLIENT_ID: "00000000-0000-0000-0000-000000000000"
   AZURE_CLIENT_SECRET: "dummy"
   ACCOUNT_NAME: "dummy"
   CERT_PROFILE_NAME: "dummy"
+  FILE_DIGEST: "SHA256"
+  TIMESTAMP_DIGEST: "SHA256"
 
 jobs:
   bundle_windows_x86_64:
@@ -36,33 +38,39 @@ jobs:
     - name: setup_rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Patch Script (Final Absolute Fix)
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: "."
+
+    - name: Patch Script (The Final Strike)
       run: |
         $path = "script/bundle-windows.ps1"
         $script = Get-Content $path
+        # 1. Исправляем путь к Visual Studio
         $script = $script -replace 'Community', 'Enterprise'
-        # Заменяем проверку переменных на пустую команду
-        $script = $script -replace '^\s*CheckEnvironmentVariables', 'Write-Host "Skipping Env Check"'
-        # Полностью вырезаем вызов скрипта подписи
-        $script = $script -replace '^\s*\. \$PSScriptRoot/../inno/\$Architecture/sign\.ps1', 'Write-Host "Skipping Sign Script"'
-        $script = $script -replace '^\s*Sign-File', 'Write-Host "Skipping Signing"'
-        $script = $script -replace '\. script/generate-licenses\.ps1', 'Write-Host "Skipping Licenses"'
+        # 2. Полностью вырезаем логику, которая падает
+        $script = $script -replace '^\s*CheckEnvironmentVariables', 'Write-Host "Bypass Env"'
+        $script = $script -replace '^\s*Sign-File', 'Write-Host "Bypass Sign"'
+        $script = $script -replace '\. script/generate-licenses\.ps1', 'Write-Host "Bypass License"'
         $script | Set-Content $path
         
-        # На всякий случай очищаем сам файл подписи, который выдал ошибку
-        if (Test-Path "inno/x86_64/sign.ps1") { Set-Content -Path "inno/x86_64/sign.ps1" -Value 'Write-Host "Signature bypassed"' }
+        # 3. Убиваем содержимое sign.ps1, чтобы он вообще не мог выкинуть ошибку
+        if (Test-Path "inno/x86_64/sign.ps1") { 
+            Set-Content -Path "inno/x86_64/sign.ps1" -Value 'function Sign-File { Write-Host "Signing skipped" }; Write-Host "Sign script neutralized"' 
+        }
         if (!(Test-Path "assets/licenses.md")) { New-Item -Path "assets/licenses.md" -ItemType File -Force }
       
     - name: run_bundling
-      # Теперь, когда всё скомпилировано, этот шаг пройдет МГНОВЕННО (за пару минут)
       run: pwsh script/bundle-windows.ps1 -Architecture x86_64
 
     - name: upload_artifact
       uses: actions/upload-artifact@v4
       with:
         name: Zed-Windows-Bypassed
-        # Проверяем оба возможных пути, где может лежать готовый файл
+        # Мы указываем несколько путей, чтобы точно найти файл
         path: |
           target/x86_64-pc-windows-msvc/release/zed.exe
           target/release/zed.exe
+          inno/x86_64/bin/zed.exe
         if-no-files-found: error
