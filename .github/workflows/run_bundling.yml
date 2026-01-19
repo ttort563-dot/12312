@@ -19,20 +19,19 @@ jobs:
     - name: setup_rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Patch Script (Disable Signing & Fix Paths)
-      # 1. Меняем Community на Enterprise (путь к VS)
-      # 2. Комментируем вызов CheckEnvironmentVariables (проверка ключей Azure)
-      # 3. Отключаем саму функцию подписи (Sign-File), чтобы скрипт не падал в конце
+    - name: Patch Script (Surgical Fix)
+      # Мы меняем Community на Enterprise и заменяем только сами вызовы функций 
+      # на команду "Write-Host", чтобы не ломать логику скрипта.
       run: |
-        $script = Get-Content script/bundle-windows.ps1
-        $script = $script -replace 'Community', 'Enterprise'
-        $script = $script -replace '(?<!#)CheckEnvironmentVariables', '# CheckEnvironmentVariables'
-        $script = $script -replace '(?<!#)Sign-File', '# Sign-File'
-        $script | Set-Content script/bundle-windows.ps1
+        (Get-Content script/bundle-windows.ps1) | ForEach-Object {
+            $_ -replace 'Community', 'Enterprise' `
+               -replace '^\s*CheckEnvironmentVariables\s*$', 'Write-Host "Skipping Env Check"' `
+               -replace '^\s*Sign-File\s*.*$', 'Write-Host "Skipping Signing"'
+        } | Set-Content script/bundle-windows.ps1
       shell: pwsh
 
     - name: run_bundling
-      # Запускаем сборку без проверок
+      # Запускаем сборку. Теперь синтаксис будет правильным.
       run: powershell script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
 
@@ -40,6 +39,6 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Zed-Windows-Bypassed
-        # В Windows версии после бандлинга файл обычно лежит в корне target или в release
+        # После сборки Zed обычно создает исполняемый файл здесь:
         path: target/release/zed.exe 
         if-no-files-found: warn
