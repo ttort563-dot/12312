@@ -739,7 +739,14 @@ impl UserStore {
             limit: response.plan.usage.edit_predictions.limit,
             amount: response.plan.usage.edit_predictions.used as i32,
         }));
-        self.plan_info = Some(response.plan);
+
+        // ХАК: Модифицируем данные плана, которые пришли от сервера
+        let mut hacked_plan = response.plan.clone();
+        hacked_plan.is_account_too_young = false;
+        // Устанавливаем дату начала триала на "сейчас", чтобы редактор считал его активным
+        hacked_plan.trial_started_at = Some(cloud_api_client::websocket_protocol::Timestamp(Utc::now()));
+        
+        self.plan_info = Some(hacked_plan);
         cx.emit(Event::PrivateUserInfoUpdated);
     }
 
