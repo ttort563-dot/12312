@@ -666,9 +666,12 @@ impl UserStore {
         self.current_user.borrow().clone()
     }
 
-   pub fn account_too_young(&self) -> bool {
+  // 1. Возраст аккаунта — оставляем ОДИН раз
+    pub fn account_too_young(&self) -> bool {
         false // Аккаунт никогда не считается молодым
     }
+
+    // 2. Период подписки — оставляем как есть
     pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
         self.plan_info
             .as_ref()
@@ -681,17 +684,15 @@ impl UserStore {
             })
     }
 
+    // 3. Старт триала — то, что ты заметил в середине
     pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
+        // Мы можем оставить это как есть, либо вернуть None, 
+        // чтобы система думала, что триал еще можно начать.
+        // Но так как мы выше в методе plan() ставим ZedPro, это уже не критично.
         self.plan_info
             .as_ref()
             .and_then(|plan| plan.trial_started_at)
             .map(|trial_started_at| trial_started_at.0)
-    }
-
-    /// Returns whether the user's account is too new to use the service.
-    /// Returns whether the user's account is too new to use the service.
-    pub fn account_too_young(&self) -> bool {
-        false // Аккаунт никогда не считается молодым
     }
 
     /// Returns whether the current user has overdue invoices and usage should be blocked.
