@@ -667,8 +667,8 @@ impl UserStore {
     }
 
     pub fn plan(&self) -> Option<Plan> {
-        // Принудительно возвращаем статус Pro Trial
-        Some(cloud_llm_client::Plan::V2(cloud_llm_client::PlanV2::ZedProTrial))
+        // Мы принудительно возвращаем статус купленного Pro плана
+        Some(cloud_llm_client::Plan::V2(cloud_llm_client::PlanV2::ZedPro))
     }
 
     pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
@@ -743,8 +743,11 @@ impl UserStore {
         // ХАК: Модифицируем данные плана, которые пришли от сервера
         let mut hacked_plan = response.plan.clone();
         hacked_plan.is_account_too_young = false;
-        // Устанавливаем дату начала триала на "сейчас", чтобы редактор считал его активным
-        hacked_plan.trial_started_at = Some(cloud_api_client::websocket_protocol::Timestamp(Utc::now()));
+        // ГОВОРИМ СИСТЕМЕ, ЧТО ПЛАН КУПЛЕН
+        hacked_plan.is_pro = true; 
+        hacked_plan.name = "Pro".to_string();
+        // Убираем дату начала триала, так как у нас "настоящий" Pro
+        hacked_plan.trial_started_at = None; 
         
         self.plan_info = Some(hacked_plan);
         cx.emit(Event::PrivateUserInfoUpdated);
